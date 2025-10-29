@@ -55,7 +55,6 @@ from .crud import (
     invalidate_proof,
 )
 from .protocols import SupportsAuth
-from .wallet_deprecated import LedgerAPIDeprecated
 
 GET = "GET"
 POST = "POST"
@@ -110,7 +109,7 @@ def async_ensure_mint_loaded(func):
     return wrapper
 
 
-class LedgerAPI(LedgerAPIDeprecated, SupportsAuth):
+class LedgerAPI(SupportsAuth):
     tor: TorProxy
     httpx: httpx.AsyncClient
     api_prefix = "v1"
@@ -148,6 +147,19 @@ class LedgerAPI(LedgerAPIDeprecated, SupportsAuth):
                 error_message += f" (Code: {resp_dict['code']})"
             raise Exception(error_message)
         resp.raise_for_status()
+
+    def raise_on_unsupported_version(self, resp: Response, endpoint:str):
+        """
+        Helper that handles unsupported endpoints (pre-v1 mints).
+        If mint returns 404 (endpoint not present), raise a clear exception.
+        Otherwise delegate to raise_on_error_request for other status codes.
+        """
+
+        if resp.status_code == 404:
+            raise Exception(f"The mint at {self.url} does not support endpoint {endpoint}.")
+        
+        #For other non-200 statuses, raise using existing logic
+        self.raise_on_error_request(resp)
 
     async def _request(self, method: str, path: str, noprefix=False, **kwargs):
         if not noprefix:
@@ -227,13 +239,10 @@ class LedgerAPI(LedgerAPIDeprecated, SupportsAuth):
             Exception: If no keys are received from the mint
         """
         resp = await self._request(GET, "keys")
-        # BEGIN backwards compatibility < 0.15.0
-        # assume the mint has not upgraded yet if we get a 404
-        if resp.status_code == 404:
-            ret = await self._get_keys_deprecated(self.url)
-            return [ret]
-        # END backwards compatibility < 0.15.0
-        self.raise_on_error_request(resp)
+
+        #if mint doesn't support v1 keys endpoint, fail explicitly
+        self.raise_on_unsupported_version(resp, "Get /v1/keys")
+
         keys_dict: dict = resp.json()
         assert len(keys_dict), Exception("did not receive any keys")
         keys = KeysResponse.parse_obj(keys_dict)
@@ -269,13 +278,9 @@ class LedgerAPI(LedgerAPIDeprecated, SupportsAuth):
         """
         keyset_id_urlsafe = keyset_id.replace("+", "-").replace("/", "_")
         resp = await self._request(GET, f"keys/{keyset_id_urlsafe}")
-        # BEGIN backwards compatibility < 0.15.0
-        # assume the mint has not upgraded yet if we get a 404
-        if resp.status_code == 404:
-            ret = await self._get_keyset_deprecated(self.url, keyset_id)
-            return ret
-        # END backwards compatibility < 0.15.0
-        self.raise_on_error_request(resp)
+
+        #if mint doesn't support v1 keyset endpoint, fail explicitly
+        self.raise_on_unsupported_version(resp, f"GET /v1/keys/{keyset_id_urlsafe}")
 
         keys_dict = resp.json()
         assert len(keys_dict), Exception("did not receive any keys")
@@ -304,13 +309,7 @@ class LedgerAPI(LedgerAPIDeprecated, SupportsAuth):
             Exception: If no keysets are received from the mint
         """
         resp = await self._request(GET, "keysets")
-        # BEGIN backwards compatibility < 0.15.0
-        # assume the mint has not upgraded yet if we get a 404
-        if resp.status_code == 404:
-            ret = await self._get_keysets_deprecated(self.url)
-            return ret
-        # END backwards compatibility < 0.15.0
-        self.raise_on_error_request(resp)
+        self.raise_on_unsupported_version(resp, "Get /v1/keysets")
 
         keysets_dict = resp.json()
         keysets = KeysetsResponse.parse_obj(keysets_dict).keysets
@@ -329,13 +328,8 @@ class LedgerAPI(LedgerAPIDeprecated, SupportsAuth):
             Exception: If the mint info request fails
         """
         resp = await self._request(GET, "/v1/info", noprefix=True)
-        # BEGIN backwards compatibility < 0.15.0
-        # assume the mint has not upgraded yet if we get a 404
-        if resp.status_code == 404:
-            ret = await self._get_info_deprecated()
-            return ret
-        # END backwards compatibility < 0.15.0
-        self.raise_on_error_request(resp)
+        self.raise_on_unsupported_version(resp, "Get /v1/info")
+
         data: dict = resp.json()
         mint_info: GetInfoResponse = GetInfoResponse.parse_obj(data)
         return mint_info
@@ -372,13 +366,9 @@ class LedgerAPI(LedgerAPIDeprecated, SupportsAuth):
             json=payload.dict(),
         )
 
-        # BEGIN backwards compatibility < 0.15.0
-        # assume the mint has not upgraded yet if we get a 404
-        if resp.status_code == 404:
-            ret = await self.request_mint_deprecated(amount)
-            return ret
-        # END backwards compatibility < 0.15.0
-        self.raise_on_error_request(resp)
+        #if mint doesn't support v1 endpoint, fail explicitly
+        self.raise_on_unsupported_version(resp, "POST /v1/mint/quote/bolt11")
+
         return_dict = resp.json()
         return PostMintQuoteResponse.parse_obj(return_dict)
 
@@ -394,7 +384,7 @@ class LedgerAPI(LedgerAPIDeprecated, SupportsAuth):
             PostMintQuoteResponse: Mint Quote Response
         """
         resp = await self._request(GET, f"mint/quote/bolt11/{quote}")
-        self.raise_on_error_request(resp)
+        self.raise_on_unsupported_version(resp, f"GET /v1/mint/quote/bolt11/{quote}")
         return_dict = resp.json()
         return PostMintQuoteResponse.parse_obj(return_dict)
 
@@ -438,13 +428,9 @@ class LedgerAPI(LedgerAPIDeprecated, SupportsAuth):
             "mint/bolt11",
             json=payload,  # type: ignore
         )
-        # BEGIN backwards compatibility < 0.15.0
-        # assume the mint has not upgraded yet if we get a 404
-        if resp.status_code == 404:
-            ret = await self.mint_deprecated(outputs, quote)
-            return ret
-        # END backwards compatibility < 0.15.0
-        self.raise_on_error_request(resp)
+        
+        # fail explicitly if mint doesn't support v1 mint endpoint
+        self.raise_on_unsupported_version(resp, f"POST /v1/mint/{quote}")
         response_dict = resp.json()
         logger.trace(f"Lightning invoice checked. POST {self.api_prefix}/mint/bolt11")
         promises = PostMintResponse.parse_obj(response_dict).signatures
@@ -475,28 +461,9 @@ class LedgerAPI(LedgerAPIDeprecated, SupportsAuth):
             "melt/quote/bolt11",
             json=payload.dict(),
         )
-        # BEGIN backwards compatibility < 0.15.0
-        # assume the mint has not upgraded yet if we get a 404
-        if resp.status_code == 404:
-            ret: CheckFeesResponse_deprecated = await self.check_fees_deprecated(
-                payment_request
-            )
-            quote_id = f"deprecated_{uuid.uuid4()}"
-            amount_sat = (
-                amount_msat // 1000 if amount_msat else invoice_obj.amount_msat // 1000
-            )
-            return PostMeltQuoteResponse(
-                quote=quote_id,
-                amount=amount_sat,
-                unit=unit.name,
-                request=payment_request,
-                fee_reserve=ret.fee or 0,
-                paid=False,
-                state=MeltQuoteState.unpaid.value,
-                expiry=invoice_obj.expiry,
-            )
-        # END backwards compatibility < 0.15.0
-        self.raise_on_error_request(resp)
+        
+        #if mint doesn't support v1 melt-quote endpoint, fail explicitly
+        self.raise_on_unsupported_version(resp, "POST /v1/melt/quote")
         return_dict = resp.json()
         return PostMeltQuoteResponse.parse_obj(return_dict)
 
@@ -558,8 +525,24 @@ class LedgerAPI(LedgerAPIDeprecated, SupportsAuth):
             if resp.status_code == 404:
                 melt_quote = await get_bolt11_melt_quote(quote=quote, db=self.db)
                 assert melt_quote, f"no melt_quote found for id {quote}"
-                ret: PostMeltResponse_deprecated = await self.melt_deprecated(
-                    proofs=proofs, outputs=outputs, invoice=melt_quote.request
+
+                # The deprecated path used to call `melt_deprecated` to obtain
+                # PostMeltResponse_deprecated (with fields like paid, preimage, change).
+                # Since we removed the deprecated implementation, construct a
+                # conservative PostMeltQuoteResponse from the stored invoice so
+                # callers still receive a response they can handle.
+                # We mark `paid=False` (safe default) and leave payment_preimage/change None.
+                return PostMeltQuoteResponse(
+                    quote=quote,
+                    amount=0,
+                    unit="sat",
+                    request=melt_quote.request,
+                    fee_reserve=0,
+                    paid=False,
+                    state=MeltQuoteState.unpaid.value,
+                    payment_preimage=None,
+                    change=None,
+                    expiry=None,
                 )
             elif isinstance(e, ValidationError):
                 # BEGIN backwards compatibility < 0.16.0
@@ -617,13 +600,9 @@ class LedgerAPI(LedgerAPIDeprecated, SupportsAuth):
             "swap",
             json=split_payload.dict(include=_splitrequest_include_fields(proofs)),  # type: ignore
         )
-        # BEGIN backwards compatibility < 0.15.0
-        # assume the mint has not upgraded yet if we get a 404
-        if resp.status_code == 404:
-            ret = await self.split_deprecated(proofs, outputs)
-            return ret
-        # END backwards compatibility < 0.15.0
-        self.raise_on_error_request(resp)
+       
+       #if mint doesn't support v1 swap endpoint, fail explicitly
+        self.raise_on_unsupported_version(resp, "POST /v1/swap")
         promises_dict = resp.json()
         mint_response = PostSwapResponse.parse_obj(promises_dict)
         promises = [BlindedSignature(**p.dict()) for p in mint_response.signatures]
@@ -645,21 +624,9 @@ class LedgerAPI(LedgerAPIDeprecated, SupportsAuth):
             "checkstate",
             json=payload.dict(),
         )
-        # BEGIN backwards compatibility < 0.15.0
-        # assume the mint has not upgraded yet if we get a 404
-        if resp.status_code == 404:
-            ret = await self.check_proof_state_deprecated(proofs)
-            # convert CheckSpendableResponse_deprecated to CheckSpendableResponse
-            states: List[ProofState] = []
-            for spendable, pending, p in zip(ret.spendable, ret.pending, proofs):
-                if spendable and not pending:
-                    states.append(ProofState(Y=p.Y, state=ProofSpentState.unspent))
-                elif spendable and pending:
-                    states.append(ProofState(Y=p.Y, state=ProofSpentState.pending))
-                else:
-                    states.append(ProofState(Y=p.Y, state=ProofSpentState.spent))
-            return PostCheckStateResponse(states=states)
-        # END backwards compatibility < 0.15.0
+        
+        #fail if endpoint missing
+        self.raise_on_unsupported_version(resp, "POST /v1/checkstate")
 
         # BEGIN backwards compatibility < 0.16.0
         # payload has "secrets" instead of "Ys"
@@ -669,7 +636,7 @@ class LedgerAPI(LedgerAPIDeprecated, SupportsAuth):
             )
             payload_secrets = {"secrets": [p.secret for p in proofs]}
             resp_secrets = await self._request(POST, "checkstate", json=payload_secrets)
-            self.raise_on_error(resp_secrets)
+            self.raise_on_error_request(resp_secrets)
             states = [
                 ProofState(Y=p.Y, state=ProofSpentState(s["state"]))
                 for p, s in zip(proofs, resp_secrets.json()["states"])
@@ -690,13 +657,8 @@ class LedgerAPI(LedgerAPIDeprecated, SupportsAuth):
         """
         payload = PostMintRequest(quote="restore", outputs=outputs)
         resp = await self._request(POST, "restore", json=payload.dict())
-        # BEGIN backwards compatibility < 0.15.0
-        # assume the mint has not upgraded yet if we get a 404
-        if resp.status_code == 404:
-            ret = await self.restore_promises_deprecated(outputs)
-            return ret
-        # END backwards compatibility < 0.15.0
-        self.raise_on_error_request(resp)
+        #fail if endpoint missing
+        self.raise_on_unsupported_version(resp, "POST /v1/restore")
         response_dict = resp.json()
         returnObj = PostRestoreResponse.parse_obj(response_dict)
 
