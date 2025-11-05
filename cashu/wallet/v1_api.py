@@ -1,5 +1,4 @@
 import json
-import uuid
 from posixpath import join
 from typing import List, Optional, Tuple, Union
 
@@ -8,8 +7,6 @@ import httpx
 from httpx import Response
 from loguru import logger
 from pydantic import ValidationError
-
-from cashu.wallet.crud import get_bolt11_melt_quote
 
 from ..core.base import (
     AuthProof,
@@ -25,7 +22,6 @@ from ..core.base import (
 from ..core.crypto.secp import PublicKey
 from ..core.db import Database
 from ..core.models import (
-    CheckFeesResponse_deprecated,
     GetInfoResponse,
     KeysetsResponse,
     KeysetsResponseKeyset,
@@ -521,32 +517,9 @@ class LedgerAPI(SupportsAuth):
             return PostMeltQuoteResponse.parse_obj(return_dict)
         except Exception as e:
             # BEGIN backwards compatibility < 0.15.0
-            # assume the mint has not upgraded yet if we get a 404
-            if resp.status_code == 404:
-                melt_quote = await get_bolt11_melt_quote(quote=quote, db=self.db)
-                assert melt_quote, f"no melt_quote found for id {quote}"
-
-                # The deprecated path used to call `melt_deprecated` to obtain
-                # PostMeltResponse_deprecated (with fields like paid, preimage, change).
-                # Since we removed the deprecated implementation, construct a
-                # conservative PostMeltQuoteResponse from the stored invoice so
-                # callers still receive a response they can handle.
-                # We mark `paid=False` (safe default) and leave payment_preimage/change None.
-                return PostMeltQuoteResponse(
-                    quote=quote,
-                    amount=0,
-                    unit="sat",
-                    request=melt_quote.request,
-                    fee_reserve=0,
-                    paid=False,
-                    state=MeltQuoteState.unpaid.value,
-                    payment_preimage=None,
-                    change=None,
-                    expiry=None,
-                )
-            elif isinstance(e, ValidationError):
+            # before 0.16.0, mints return PostMeltResponse_deprecated
+            if isinstance(e, ValidationError):
                 # BEGIN backwards compatibility < 0.16.0
-                # before 0.16.0, mints return PostMeltResponse_deprecated
                 ret = PostMeltResponse_deprecated.parse_obj(return_dict)
                 # END backwards compatibility < 0.16.0
             else:
