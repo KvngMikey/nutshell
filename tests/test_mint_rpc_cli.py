@@ -87,26 +87,15 @@ def test_update_name(cli_prefix):
     assert "Name successfully updated!" in result.output
 
 
-def test_add_mint_url(cli_prefix):
+def test_add_remove_mint_url(cli_prefix):
     runner = CliRunner()
     url = f"http://example.com/{uuid4()}"
-    try:
-        result = runner.invoke(cli, [*cli_prefix, "update", "url", "add", url])
-        assert "Url successfully added!" in result.output
-    finally:
-        runner.invoke(cli, [*cli_prefix, "update", "url", "remove", url])
+    add_result = runner.invoke(cli, [*cli_prefix, "update", "url", "add", url])
+    assert "Url successfully added!" in add_result.output
 
-
-def test_remove_mint_url(cli_prefix):
-    runner = CliRunner()
-    result = runner.invoke(
-        cli, [*cli_prefix, "update", "url", "remove", "http://example.com"]
-    )
-    assert result.exception is None
-    assert (
-        "Url successfully removed!" in result.output
-        or "Contact method not found" in result.output
-    )
+    remove_result = runner.invoke(cli, [*cli_prefix, "update", "url", "remove", url])
+    assert remove_result.exception is None
+    assert "Url successfully removed!" in remove_result.output
 
 
 def test_add_remove_contact(cli_prefix):
