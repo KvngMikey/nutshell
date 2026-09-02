@@ -13,6 +13,7 @@ from cashu.core.base import (
     Unit,
 )
 from cashu.core.errors import (
+    InvoiceAlreadyPaidError,
     LightningPaymentFailedError,
     OutputsAlreadySignedError,
     OutputsArePendingError,
@@ -987,3 +988,24 @@ async def test_melt_early_return_leaves_no_orphan_blank_outputs(
         f"Expected no orphan blank outputs for melt {melt_quote.quote}, "
         f"got {len(orphans)} with B_s {[o.B_ for o in orphans]}"
     )
+
+
+@pytest.mark.asyncio
+async def test_prepare_melt_rejects_already_paid_quote(ledger: Ledger):
+    """_prepare_melt runs before the locked guard, so it must report the paid
+    state with its own code rather than a generic transaction error."""
+    quote = MeltQuote(
+        quote="quote_id_already_paid",
+        method="bolt11",
+        request="lnbcfake",
+        checking_id="checking_id_already_paid",
+        unit="sat",
+        state=MeltQuoteState.paid,
+        amount=100,
+        fee_reserve=1,
+    )
+    await ledger.crud.store_melt_quote(quote=quote, db=ledger.db)
+
+    with pytest.raises(InvoiceAlreadyPaidError) as exc_info:
+        await ledger._prepare_melt(proofs=[], quote=quote.quote)
+    assert exc_info.value.code == 20006

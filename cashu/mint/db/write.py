@@ -176,6 +176,8 @@ class DbWriteHelper:
                 raise TransactionError("Mint quote not found.")
             if quote.pending:
                 raise QuotePendingError("Mint quote already pending.")
+            if quote.issued:
+                raise QuoteAlreadyIssuedError(f"Mint quote {quote_id} is already issued.")
             if not quote.paid:
                 raise QuoteNotPaidError("Mint quote is not paid yet.")
             # set the quote as pending

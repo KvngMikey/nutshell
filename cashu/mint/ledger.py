@@ -693,7 +693,7 @@ class Ledger(
         if mint_quote.paid:
             raise InvoiceAlreadyPaidError("mint quote already paid")
         if mint_quote.issued:
-            raise TransactionError("mint quote already issued")
+            raise QuoteAlreadyIssuedError("mint quote already issued")
         if not mint_quote.unpaid:
             raise TransactionError("mint quote is not unpaid")
 
@@ -1003,7 +1003,7 @@ class Ledger(
         if mint_quote.paid:
             raise InvoiceAlreadyPaidError("mint quote already paid")
         if mint_quote.issued:
-            raise TransactionError("mint quote already issued")
+            raise QuoteAlreadyIssuedError("mint quote already issued")
 
         if mint_quote.state != MintQuoteState.unpaid:
             raise TransactionError("mint quote is not unpaid")
@@ -1102,8 +1102,12 @@ class Ledger(
 
         # get melt quote and check if it was already paid
         melt_quote = await self.get_melt_quote(quote_id=quote)
-        if not melt_quote.unpaid:
-            raise TransactionError(f"melt quote is not unpaid: {melt_quote.state}")
+        if melt_quote.paid:
+            raise InvoiceAlreadyPaidError(
+                f"melt quote is not unpaid: {melt_quote.state}"
+            )
+        if melt_quote.pending:
+            raise QuotePendingError(f"melt quote is not unpaid: {melt_quote.state}")
 
         unit, _ = self._verify_and_get_unit_method(melt_quote.unit, melt_quote.method)
 
